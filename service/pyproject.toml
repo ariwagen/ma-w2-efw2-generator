@@ -1,0 +1,17 @@
+[project]
+name = "ma-w2-extract-service"
+version = "0.1.0"
+description = "Local W-2 PDF extraction service"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi",
+  "uvicorn",
+  "python-multipart",
+  "pdfplumber",
+  "pymupdf",
+]
+
+[tool.uv]
+# Let uv manage the project environment in .venv
+managed = true

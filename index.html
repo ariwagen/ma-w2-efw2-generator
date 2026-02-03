@@ -1,0 +1,708 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MA W-2 EFW2 Generator (RS/RT/RF)</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; color: #111; }
+    h1 { font-size: 20px; margin-bottom: 8px; }
+    h2 { font-size: 16px; margin: 0px 0 8px; }
+    .section { border: 1px solid #ccc; padding: 12px; margin-bottom: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(4, minmax(160px, 1fr)); gap: 8px; }
+    label { font-size: 12px; display: inline-block; margin-bottom: 2px; }
+    label.req::after { content: " *"; color: #b00020; font-weight: bold; }
+    label[title] { cursor: help; border-bottom: 1px dotted #888; }
+    label[title]:not(.req)::after { content: " (i)"; color: #555; font-size: 11px; }
+    label.req[title]::after { content: " * (i)"; color: #b00020; font-weight: bold; }
+    .hint { font-size: 11px; color: #555; margin-top: 2px; }
+    input, select, textarea { width: 100%; padding: 6px; box-sizing: border-box; }
+    textarea { height: 140px; font-family: monospace; }
+    .row { display: flex; gap: 8px; align-items: center; }
+    .row > * { flex: 1; }
+    .employee-row { border: 1px dashed #aaa; padding: 10px; margin-bottom: 8px; }
+    .actions { display: flex; gap: 8px; margin-top: 8px; }
+    .small { font-size: 12px; color: #444; }
+    .intro { margin-bottom: 10px; display: block; }
+    .error { color: #b00020; white-space: pre-wrap; }
+    button { padding: 8px 12px; }
+  </style>
+</head>
+<body>
+  <h1>MA W-2 EFW2 .txt Generator (RA/RE/RS/RT/RF)</h1>
+  <div class="small intro">Generates a Massachusetts W-2 state file with RA, RE, RS, RT, RF records. Records are 512 bytes and delimited with CRLF.</div>
+
+  <div class="section">
+    <h2>Resources</h2>
+    <div class="small">
+      SSA EFW2 Specifications: <a href="https://www.ssa.gov/employer/EFW2%26EFW2C.htm" target="_blank" rel="noopener">SSA EFW2 &amp; EFW2C</a><br />
+      Massachusetts W-2 Responsibilities: <a href="https://www.mass.gov/info-details/massachusetts-form-w-2-responsibilities-for-employers" target="_blank" rel="noopener">Massachusetts Form W-2 Responsibilities</a>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Abbreviations</h2>
+    <div class="small">
+      BSO = SSA “Business Services Online” user ID used to submit EFW2 files.<br />
+      EFW2 = SSA “Electronic Filing of W-2” file format.<br />
+      EIN = Employer Identification Number.<br />
+      SSN = Social Security Number.<br />
+      MA = Massachusetts.<br />
+      MAPFML = Massachusetts Paid Family and Medical Leave (employee contribution).<br />
+      CRLF = Carriage Return + Line Feed record delimiter.<br />
+      RA/RE/RS/RT/RF = Record types (Submitter/Employer/State Employee/Total/Final).
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Import W-2 PDF (Local)</h2>
+    <div class="small intro">Uses a local service on `http://localhost:8000` to extract easy-to-find fields. See `service/README.md`.</div>
+    <div class="row">
+      <div>
+        <label title="PDFs are processed locally by the Python service.">W-2 PDF</label>
+        <input id="pdf_upload" type="file" accept="application/pdf" />
+      </div>
+      <div class="actions">
+        <button id="extract_pdf" type="button">Extract Fields</button>
+      </div>
+    </div>
+    <div id="pdf_status" class="small"></div>
+  </div>
+
+  <div class="section">
+    <h2>Generic Company Info</h2>
+    <div class="small intro">Populate RA Company, RA Submitter, and RE fields from one place. Use if the submitter and employer are the same. Phone numbers should be digits only (no special characters).</div>
+    <div class="row">
+      <div><label title="Applies these fields to RA Company, RA Submitter, and RE.">Auto-fill From Generic</label><input id="use_generic" type="checkbox" /></div>
+      <div class="actions"><button id="apply_generic" type="button">Apply Now</button></div>
+    </div>
+    <div class="grid">
+      <div><label title="Company/legal name.">Name</label><input id="gen_name" maxlength="57" /></div>
+      <div><label title="Location address line (attention/suite/room).">Location Address</label><input id="gen_loc" maxlength="22" /></div>
+      <div><label title="Delivery address (street or PO Box).">Delivery Address</label><input id="gen_del" maxlength="22" /></div>
+      <div><label title="City.">City</label><input id="gen_city" maxlength="22" /></div>
+
+      <div><label title="State (blank for foreign).">State</label><input id="gen_state" maxlength="2" /></div>
+      <div><label title="ZIP.">ZIP</label><input id="gen_zip5" maxlength="5" /></div>
+      <div><label title="ZIP+4.">ZIP+4</label><input id="gen_zip4" maxlength="4" /></div>
+
+      <div><label title="Contact name (used for RA contact and RE employer contact).">Contact Name</label><input id="gen_contact_name" maxlength="27" /></div>
+      <div><label title="Contact phone.">Contact Phone</label><input id="gen_contact_phone" maxlength="15" /></div>
+      <div><label title="Contact extension.">Contact Ext</label><input id="gen_contact_ext" maxlength="5" /></div>
+      <div><label title="Contact email.">Contact Email</label><input id="gen_contact_email" maxlength="40" /></div>
+      <div><label title="Contact fax.">Contact Fax</label><input id="gen_contact_fax" maxlength="10" /></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Submitter (RA)</h2>
+    <div class="grid">
+      <div><label class="req" title="Required by MA DOR: Submitter EIN must match MassTaxConnect user.">Submitter EIN (9)</label><input id="ra_ein" maxlength="9" /></div>
+      <div><label title="SSA EFW2 uses a BSO (Business Services Online) User ID for federal filing. Optional for MA-only filing.">BSO User ID (8)</label><input id="ra_user_id" maxlength="8" /></div>
+      <div><label title="NATCP software vendor code (if assigned). Otherwise blank.">Software Vendor Code (4)</label><input id="ra_vendor_code" maxlength="4" disabled /></div>
+      <div><label title="Enter 1 if resubmission, else 0.">Resubmission Indicator (0/1)</label><input id="ra_resub" maxlength="1" value="0" /></div>
+
+      <div><label class="req" title="Required by MA DOR.">Company Name</label><input id="ra_company_name" maxlength="57" /></div>
+      <div><label class="req" title="Street/location line (Attention/Suite/Room). Left-justify; blanks for unused.">Company Location Address</label><input id="ra_company_loc" maxlength="22" /></div>
+      <div><label class="req" title="Delivery Address (street or PO Box). Left-justify; blanks for unused.">Company Delivery Address</label><input id="ra_company_del" maxlength="22" /></div>
+      <div><label class="req" title="City (even if foreign). Left-justify; blanks for unused.">Company City</label><input id="ra_company_city" maxlength="22" /></div>
+
+      <div><label class="req" title="State (blank for foreign address).">Company State</label><input id="ra_company_state" maxlength="2" /></div>
+      <div><label title="Required for US addresses.">Company ZIP</label><input id="ra_company_zip5" maxlength="5" /></div>
+      <div><label title="Optional for US addresses.">Company ZIP+4</label><input id="ra_company_zip4" maxlength="4" /></div>
+      <div><label title="Only for foreign addresses.">Company Foreign State/Prov</label><input id="ra_company_fstate" maxlength="23" /></div>
+
+      <div><label title="Only for foreign addresses.">Company Foreign Postal</label><input id="ra_company_fpostal" maxlength="15" /></div>
+      <div><label title="Only for foreign addresses.">Company Country Code</label><input id="ra_company_cc" maxlength="2" /></div>
+
+      <div><label class="req" title="Required by MA DOR.">Submitter Name</label><input id="ra_submitter_name" maxlength="57" /></div>
+      <div><label title="Optional.">Submitter Location Address</label><input id="ra_submitter_loc" maxlength="22" /></div>
+      <div><label title="Delivery Address (street or PO Box). Left-justify; blanks for unused.">Submitter Delivery Address</label><input id="ra_submitter_del" maxlength="22" /></div>
+      <div><label title="Optional.">Submitter City</label><input id="ra_submitter_city" maxlength="22" /></div>
+
+      <div><label title="Optional (blank for foreign).">Submitter State</label><input id="ra_submitter_state" maxlength="2" /></div>
+      <div><label title="Optional for US addresses.">Submitter ZIP</label><input id="ra_submitter_zip5" maxlength="5" /></div>
+      <div><label title="Optional for US addresses.">Submitter ZIP+4</label><input id="ra_submitter_zip4" maxlength="4" /></div>
+      <div><label title="Only for foreign addresses.">Submitter Foreign State/Prov</label><input id="ra_submitter_fstate" maxlength="23" /></div>
+
+      <div><label title="Only for foreign addresses.">Submitter Foreign Postal</label><input id="ra_submitter_fpostal" maxlength="15" /></div>
+      <div><label title="Only for foreign addresses.">Submitter Country Code</label><input id="ra_submitter_cc" maxlength="2" /></div>
+
+      <div><label title="Optional contact for DOR processing issues.">Contact Name</label><input id="ra_contact_name" maxlength="27" /></div>
+      <div><label title="Optional contact phone.">Contact Phone</label><input id="ra_contact_phone" maxlength="15" /></div>
+      <div><label title="Optional phone extension.">Contact Phone Ext</label><input id="ra_contact_ext" maxlength="5" /></div>
+      <div><label title="Required by SSA EFW2.">Contact Email</label><input id="ra_contact_email" maxlength="40" /></div>
+
+      <div><label title="Optional.">Contact Fax</label><input id="ra_contact_fax" maxlength="10" /></div>
+      <div><label title="A=Accounting, S=Service Bureau, L=Self, P=Parent, O=Other.">Preparer Code (A/S/L/P/O)</label><input id="ra_preparer" maxlength="1" value="L" /></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Employer (RE)</h2>
+    <div class="grid">
+      <div><label class="req" title="Tax year for this report (YYYY).">Tax Year</label><input id="re_tax_year" maxlength="4" value="2025" /></div>
+      <div><label title="1=Agent, 2=Common Paymaster, blank otherwise.">Agent Indicator Code (1/2 or blank)</label><input id="re_agent_code" maxlength="1" /></div>
+      <div><label class="req" title="Employer EIN (or agent EIN if code 1).">Employer/Agent EIN (9)</label><input id="re_ein" maxlength="9" /></div>
+      <div><label title="Only if Agent Indicator Code = 1.">Agent For EIN (9)</label><input id="re_agent_for_ein" maxlength="9" /></div>
+
+      <div><label title="Enter 1 if business terminated during tax year, else 0.">Terminating Business (0/1)</label><input id="re_terminating" maxlength="1" value="0" /></div>
+      <div><label title="Only if a different EIN was used for prior submissions this tax year.">Other EIN</label><input id="re_other_ein" maxlength="9" /></div>
+
+      <div><label class="req" title="Required by MA DOR.">Employer Name</label><input id="re_name" maxlength="57" /></div>
+      <div><label class="req" title="Required by MA DOR (location or delivery address).">Location Address</label><input id="re_loc" maxlength="22" /></div>
+      <div><label class="req" title="Delivery Address (street or PO Box). Left-justify; blanks for unused.">Delivery Address</label><input id="re_del" maxlength="22" /></div>
+      <div><label class="req" title="Required by MA DOR.">City</label><input id="re_city" maxlength="22" /></div>
+
+      <div><label class="req" title="Required by MA DOR.">State</label><input id="re_state" maxlength="2" /></div>
+      <div><label title="Required by SSA EFW2.">ZIP</label><input id="re_zip5" maxlength="5" /></div>
+      <div><label title="Optional.">ZIP+4</label><input id="re_zip4" maxlength="4" /></div>
+      <div><label title="F=Federal govt; S=State/local non-501c; T=501c non-govt; Y=State/local 501c; N=None. Leave blank if Tax Jurisdiction Code is P (Puerto Rico).">Kind of Employer</label><input id="re_kind" maxlength="1" value="N" /></div>
+
+      <div><label title="Only for foreign addresses.">Foreign State/Prov</label><input id="re_fstate" maxlength="23" /></div>
+      <div><label title="Only for foreign addresses.">Foreign Postal</label><input id="re_fpostal" maxlength="15" /></div>
+      <div><label title="Only for foreign addresses.">Country Code</label><input id="re_cc" maxlength="2" /></div>
+      <div><label title="A=Ag, H=Household, M=Military, Q=Medicare Gov, X=Railroad, R=Regular.">Employment Code</label><input id="re_employment" maxlength="1" value="R" /></div>
+
+      <div><label title="Usually blank for MA state filing; see SSA EFW2 if needed.">Tax Jurisdiction Code</label><input id="re_tax_jurisdiction" maxlength="1" /></div>
+      <div><label title="Enter 1 if third-party sick pay applies, else 0.">Third Party Sick Pay (0/1)</label><input id="re_sick_pay" maxlength="1" value="0" /></div>
+
+      <div><label title="Required by SSA EFW2.">Employer Contact Name</label><input id="re_contact_name" maxlength="27" /></div>
+      <div><label title="Required by SSA EFW2.">Employer Contact Phone</label><input id="re_contact_phone" maxlength="15" /></div>
+      <div><label title="Optional.">Employer Contact Ext</label><input id="re_contact_ext" maxlength="5" /></div>
+      <div><label title="Optional.">Employer Contact Fax</label><input id="re_contact_fax" maxlength="10" /></div>
+      <div><label title="Required by SSA EFW2.">Employer Contact Email</label><input id="re_contact_email" maxlength="40" /></div>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Employees (RS)</h2>
+    <div id="employees"></div>
+    <div class="actions">
+      <button id="add_employee" type="button">Add Employee</button>
+    </div>
+  </div>
+
+  <div class="section">
+    <h2>Output</h2>
+    <div class="actions">
+      <button id="generate" type="button">Generate File</button>
+      <button id="download" type="button" disabled>Download .txt</button>
+    </div>
+    <div id="errors" class="error"></div>
+    <label>Preview (first 5 records)</label>
+    <textarea id="preview" readonly></textarea>
+  </div>
+
+  <script>
+    const employeesEl = document.getElementById('employees');
+    const errorsEl = document.getElementById('errors');
+    const previewEl = document.getElementById('preview');
+    const downloadBtn = document.getElementById('download');
+    const pdfStatusEl = document.getElementById('pdf_status');
+
+    function createEmployeeRow() {
+      const wrapper = document.createElement('div');
+      wrapper.className = 'employee-row';
+      wrapper.innerHTML = `
+        <div class="grid">
+          <div><label class="req" title="Required by MA DOR.">SSN</label><input data-field="ssn" maxlength="9" /></div>
+          <div><label title="Optional but recommended.">First Name</label><input data-field="first" maxlength="15" /></div>
+          <div><label title="Optional.">Middle Name/Initial</label><input data-field="middle" maxlength="15" /></div>
+          <div><label class="req" title="Required by MA DOR.">Last Name</label><input data-field="last" maxlength="20" /></div>
+
+          <div><label title="Optional.">Suffix</label><input data-field="suffix" maxlength="4" /></div>
+          <div><label title="Optional.">Location Address</label><input data-field="loc" maxlength="22" /></div>
+          <div><label title="Optional.">Delivery Address</label><input data-field="del" maxlength="22" /></div>
+          <div><label title="Optional.">City</label><input data-field="city" maxlength="22" /></div>
+
+          <div><label title="Optional.">State</label><input data-field="state" maxlength="2" /></div>
+          <div><label title="Optional.">ZIP</label><input data-field="zip5" maxlength="5" /></div>
+          <div><label title="Optional.">ZIP+4</label><input data-field="zip4" maxlength="4" /></div>
+
+          <div><label class="req" title="Required by MA DOR. Implied cents (e.g., 1234.56).">MA Taxable Wages</label><input data-field="wages" /></div>
+          <div><label class="req" title="Required by MA DOR. Implied cents.">MA Tax Withheld</label><input data-field="withheld" /></div>
+          <div><label title="MAPFML employee contribution. Implied cents.">MAPFML Contribution</label><input data-field="mapfml" /></div>
+        </div>
+        <div class="actions">
+          <button type="button" class="remove">Remove</button>
+        </div>
+      `;
+      wrapper.querySelector('.remove').addEventListener('click', () => {
+        wrapper.remove();
+      });
+      return wrapper;
+    }
+
+    document.getElementById('add_employee').addEventListener('click', () => {
+      employeesEl.appendChild(createEmployeeRow());
+    });
+
+    // Add one employee by default
+    employeesEl.appendChild(createEmployeeRow());
+
+    function padLeft(value, length, padChar) {
+      const v = value ?? '';
+      if (v.length >= length) return v.slice(0, length);
+      return padChar.repeat(length - v.length) + v;
+    }
+
+    function padRight(value, length, padChar) {
+      const v = value ?? '';
+      if (v.length >= length) return v.slice(0, length);
+      return v + padChar.repeat(length - v.length);
+    }
+
+    function normalizeUpper(value) {
+      return (value ?? '').toUpperCase();
+    }
+
+    function parseMoneyToCents(input, errors, fieldName) {
+      const raw = (input ?? '').trim();
+      if (raw === '') return 0n;
+      const cleaned = raw.replace(/[$,\s]/g, '');
+      if (cleaned.startsWith('-')) {
+        errors.push(`${fieldName}: negative values are not allowed.`);
+        return 0n;
+      }
+      const parts = cleaned.split('.');
+      if (parts.length > 2) {
+        errors.push(`${fieldName}: invalid number format.`);
+        return 0n;
+      }
+      const dollars = parts[0] === '' ? '0' : parts[0];
+      const cents = parts.length === 2 ? parts[1] : '00';
+      if (!/^\d+$/.test(dollars) || !/^\d*$/.test(cents)) {
+        errors.push(`${fieldName}: invalid number format.`);
+        return 0n;
+      }
+      if (cents.length > 2) {
+        errors.push(`${fieldName}: more than 2 decimal places.`);
+        return 0n;
+      }
+      const centsPadded = cents.padEnd(2, '0');
+      return BigInt(dollars) * 100n + BigInt(centsPadded);
+    }
+
+    function formatMoney(cents, length, errors, fieldName) {
+      const value = cents.toString();
+      if (value.length > length) {
+        errors.push(`${fieldName}: value too large for length ${length}.`);
+        return padLeft(value, length, '0');
+      }
+      return padLeft(value, length, '0');
+    }
+
+    function setField(record, start, length, value) {
+      const s = value ?? '';
+      for (let i = 0; i < length; i += 1) {
+        record[start - 1 + i] = s[i] ?? ' ';
+      }
+    }
+
+    function formatDigits(input, length, errors, fieldName, options = {}) {
+      const { required = false, emptyValue = null } = options;
+      const raw = (input ?? '').trim();
+      const digits = raw.replace(/\D/g, '');
+      if (digits.length === 0) {
+        if (required) errors.push(`${fieldName} is required.`);
+        if (emptyValue !== null) return emptyValue;
+        return ' '.repeat(length);
+      }
+      if (digits.length !== length) {
+        errors.push(`${fieldName} must be exactly ${length} digits.`);
+      }
+      if (digits.length > length) {
+        errors.push(`${fieldName} has too many digits.`);
+      }
+      return padLeft(digits, length, '0');
+    }
+
+    function buildRA(errors) {
+      const record = Array(512).fill(' ');
+      setField(record, 1, 2, 'RA');
+
+      const submitterEin = document.getElementById('ra_ein').value.trim();
+      const userId = document.getElementById('ra_user_id').value.trim();
+
+      if (!submitterEin) errors.push('RA: Submitter EIN is required.');
+      // BSO User ID is required by SSA, but allow empty here if the user is only filing state.
+      if (!document.getElementById('ra_company_name').value.trim()) errors.push('RA: Company Name is required.');
+      if (!document.getElementById('ra_submitter_name').value.trim()) errors.push('RA: Submitter Name is required.');
+      if (!document.getElementById('ra_contact_email').value.trim()) errors.push('RA: Contact Email is required.');
+      if (!document.getElementById('ra_submitter_name').value.trim()) errors.push('RA: Submitter Name is required.');
+      if (!document.getElementById('ra_company_loc').value.trim() && !document.getElementById('ra_company_del').value.trim()) errors.push('RA: Company Address is required.');
+      if (!document.getElementById('ra_company_city').value.trim()) errors.push('RA: Company City is required.');
+      if (!document.getElementById('ra_company_state').value.trim()) errors.push('RA: Company State is required.');
+
+      setField(record, 3, 9, formatDigits(submitterEin, 9, errors, 'RA: Submitter EIN', { required: true, emptyValue: '000000000' }));
+      setField(record, 12, 8, padRight(normalizeUpper(userId), 8, ' '));
+      setField(record, 20, 4, padRight(document.getElementById('ra_vendor_code').value.trim(), 4, ' '));
+      setField(record, 29, 1, padRight(document.getElementById('ra_resub').value.trim() || '0', 1, ' '));
+
+      setField(record, 38, 57, padRight(normalizeUpper(document.getElementById('ra_company_name').value.trim()), 57, ' '));
+      setField(record, 95, 22, padRight(normalizeUpper(document.getElementById('ra_company_loc').value.trim()), 22, ' '));
+      setField(record, 117, 22, padRight(normalizeUpper(document.getElementById('ra_company_del').value.trim()), 22, ' '));
+      setField(record, 139, 22, padRight(normalizeUpper(document.getElementById('ra_company_city').value.trim()), 22, ' '));
+      setField(record, 161, 2, padRight(normalizeUpper(document.getElementById('ra_company_state').value.trim()), 2, ' '));
+      setField(record, 163, 5, formatDigits(document.getElementById('ra_company_zip5').value.trim(), 5, errors, 'RA: Company ZIP'));
+      setField(record, 168, 4, formatDigits(document.getElementById('ra_company_zip4').value.trim(), 4, errors, 'RA: Company ZIP+4'));
+      setField(record, 177, 23, padRight(normalizeUpper(document.getElementById('ra_company_fstate').value.trim()), 23, ' '));
+      setField(record, 200, 15, padRight(normalizeUpper(document.getElementById('ra_company_fpostal').value.trim()), 15, ' '));
+      setField(record, 215, 2, padRight(normalizeUpper(document.getElementById('ra_company_cc').value.trim()), 2, ' '));
+
+      setField(record, 217, 57, padRight(normalizeUpper(document.getElementById('ra_submitter_name').value.trim()), 57, ' '));
+      setField(record, 274, 22, padRight(normalizeUpper(document.getElementById('ra_submitter_loc').value.trim()), 22, ' '));
+      setField(record, 296, 22, padRight(normalizeUpper(document.getElementById('ra_submitter_del').value.trim()), 22, ' '));
+      setField(record, 318, 22, padRight(normalizeUpper(document.getElementById('ra_submitter_city').value.trim()), 22, ' '));
+      setField(record, 340, 2, padRight(normalizeUpper(document.getElementById('ra_submitter_state').value.trim()), 2, ' '));
+      setField(record, 342, 5, formatDigits(document.getElementById('ra_submitter_zip5').value.trim(), 5, errors, 'RA: Submitter ZIP'));
+      setField(record, 347, 4, formatDigits(document.getElementById('ra_submitter_zip4').value.trim(), 4, errors, 'RA: Submitter ZIP+4'));
+      setField(record, 356, 23, padRight(normalizeUpper(document.getElementById('ra_submitter_fstate').value.trim()), 23, ' '));
+      setField(record, 379, 15, padRight(normalizeUpper(document.getElementById('ra_submitter_fpostal').value.trim()), 15, ' '));
+      setField(record, 394, 2, padRight(normalizeUpper(document.getElementById('ra_submitter_cc').value.trim()), 2, ' '));
+
+      setField(record, 396, 27, padRight(normalizeUpper(document.getElementById('ra_contact_name').value.trim()), 27, ' '));
+      setField(record, 423, 15, padRight(document.getElementById('ra_contact_phone').value.trim(), 15, ' '));
+      setField(record, 438, 5, padRight(document.getElementById('ra_contact_ext').value.trim(), 5, ' '));
+      setField(record, 446, 40, padRight(document.getElementById('ra_contact_email').value.trim(), 40, ' '));
+      setField(record, 489, 10, padRight(document.getElementById('ra_contact_fax').value.trim(), 10, ' '));
+      setField(record, 500, 1, padRight(normalizeUpper(document.getElementById('ra_preparer').value.trim()), 1, ' '));
+
+      return record.join('');
+    }
+
+    function buildRE(errors) {
+      const record = Array(512).fill(' ');
+      setField(record, 1, 2, 'RE');
+
+      if (!document.getElementById('re_ein').value.trim()) errors.push('RE: Employer EIN is required.');
+      if (!document.getElementById('re_name').value.trim()) errors.push('RE: Employer Name is required.');
+      if (!document.getElementById('re_loc').value.trim() && !document.getElementById('re_del').value.trim()) errors.push('RE: Employer Address is required.');
+      if (!document.getElementById('re_city').value.trim()) errors.push('RE: Employer City is required.');
+      if (!document.getElementById('re_state').value.trim()) errors.push('RE: Employer State is required.');
+      if (!document.getElementById('re_zip5').value.trim()) errors.push('RE: Employer ZIP is required.');
+      if (!document.getElementById('re_contact_name').value.trim()) errors.push('RE: Employer Contact Name is required.');
+      if (!document.getElementById('re_contact_phone').value.trim()) errors.push('RE: Employer Contact Phone is required.');
+      if (!document.getElementById('re_contact_email').value.trim()) errors.push('RE: Employer Contact Email is required.');
+
+      setField(record, 3, 4, formatDigits(document.getElementById('re_tax_year').value.trim(), 4, errors, 'RE: Tax Year', { required: true, emptyValue: '0000' }));
+      setField(record, 7, 1, padRight(document.getElementById('re_agent_code').value.trim(), 1, ' '));
+      setField(record, 8, 9, formatDigits(document.getElementById('re_ein').value.trim(), 9, errors, 'RE: Employer EIN', { required: true, emptyValue: '000000000' }));
+      setField(record, 17, 9, formatDigits(document.getElementById('re_agent_for_ein').value.trim(), 9, errors, 'RE: Agent For EIN'));
+      setField(record, 26, 1, padRight(document.getElementById('re_terminating').value.trim() || '0', 1, ' '));
+      setField(record, 31, 9, formatDigits(document.getElementById('re_other_ein').value.trim(), 9, errors, 'RE: Other EIN'));
+
+      setField(record, 40, 57, padRight(normalizeUpper(document.getElementById('re_name').value.trim()), 57, ' '));
+      setField(record, 97, 22, padRight(normalizeUpper(document.getElementById('re_loc').value.trim()), 22, ' '));
+      setField(record, 119, 22, padRight(normalizeUpper(document.getElementById('re_del').value.trim()), 22, ' '));
+      setField(record, 141, 22, padRight(normalizeUpper(document.getElementById('re_city').value.trim()), 22, ' '));
+      setField(record, 163, 2, padRight(normalizeUpper(document.getElementById('re_state').value.trim()), 2, ' '));
+      setField(record, 165, 5, formatDigits(document.getElementById('re_zip5').value.trim(), 5, errors, 'RE: ZIP'));
+      setField(record, 170, 4, formatDigits(document.getElementById('re_zip4').value.trim(), 4, errors, 'RE: ZIP+4'));
+      setField(record, 174, 1, padRight(normalizeUpper(document.getElementById('re_kind').value.trim()), 1, ' '));
+      setField(record, 179, 23, padRight(normalizeUpper(document.getElementById('re_fstate').value.trim()), 23, ' '));
+      setField(record, 202, 15, padRight(normalizeUpper(document.getElementById('re_fpostal').value.trim()), 15, ' '));
+      setField(record, 217, 2, padRight(normalizeUpper(document.getElementById('re_cc').value.trim()), 2, ' '));
+      setField(record, 219, 1, padRight(normalizeUpper(document.getElementById('re_employment').value.trim()), 1, ' '));
+      setField(record, 220, 1, padRight(normalizeUpper(document.getElementById('re_tax_jurisdiction').value.trim()), 1, ' '));
+      setField(record, 221, 1, padRight(document.getElementById('re_sick_pay').value.trim() || '0', 1, ' '));
+
+      setField(record, 222, 27, padRight(normalizeUpper(document.getElementById('re_contact_name').value.trim()), 27, ' '));
+      setField(record, 249, 15, padRight(document.getElementById('re_contact_phone').value.trim(), 15, ' '));
+      setField(record, 264, 5, padRight(document.getElementById('re_contact_ext').value.trim(), 5, ' '));
+      setField(record, 269, 10, padRight(document.getElementById('re_contact_fax').value.trim(), 10, ' '));
+      setField(record, 279, 40, padRight(document.getElementById('re_contact_email').value.trim(), 40, ' '));
+
+      return record.join('');
+    }
+
+    function buildRS(employee, errors, index) {
+      const record = Array(512).fill(' ');
+      setField(record, 1, 2, 'RS');
+      setField(record, 3, 2, '25');
+      setField(record, 10, 9, formatDigits(employee.ssn, 9, errors, `Employee ${index}: SSN`, { required: true, emptyValue: '000000000' }));
+      setField(record, 19, 15, padRight(normalizeUpper(employee.first), 15, ' '));
+      setField(record, 34, 15, padRight(normalizeUpper(employee.middle), 15, ' '));
+      setField(record, 49, 20, padRight(normalizeUpper(employee.last), 20, ' '));
+      setField(record, 69, 4, padRight(normalizeUpper(employee.suffix), 4, ' '));
+      setField(record, 73, 22, padRight(normalizeUpper(employee.loc), 22, ' '));
+      setField(record, 95, 22, padRight(normalizeUpper(employee.del), 22, ' '));
+      setField(record, 117, 22, padRight(normalizeUpper(employee.city), 22, ' '));
+      setField(record, 139, 2, padRight(normalizeUpper(employee.state), 2, ' '));
+      setField(record, 141, 5, formatDigits(employee.zip5, 5, errors, `Employee ${index}: ZIP`));
+      setField(record, 146, 4, formatDigits(employee.zip4, 4, errors, `Employee ${index}: ZIP+4`));
+      setField(record, 274, 2, '25');
+
+      const wagesCents = parseMoneyToCents(employee.wages, errors, `Employee ${index}: MA Taxable Wages`);
+      const withheldCents = parseMoneyToCents(employee.withheld, errors, `Employee ${index}: MA Tax Withheld`);
+      const mapfmlCents = parseMoneyToCents(employee.mapfml, errors, `Employee ${index}: MAPFML`);
+
+      setField(record, 276, 11, formatMoney(wagesCents, 11, errors, `Employee ${index}: MA Taxable Wages`));
+      setField(record, 287, 11, formatMoney(withheldCents, 11, errors, `Employee ${index}: MA Tax Withheld`));
+      setField(record, 371, 11, formatMoney(mapfmlCents, 11, errors, `Employee ${index}: MAPFML`));
+
+      if (!employee.ssn.trim()) errors.push(`Employee ${index}: SSN is required.`);
+      if (!employee.last.trim()) errors.push(`Employee ${index}: Last Name is required.`);
+      if (!employee.wages.trim()) errors.push(`Employee ${index}: MA Taxable Wages is required.`);
+      if (!employee.withheld.trim()) errors.push(`Employee ${index}: MA Tax Withheld is required.`);
+
+      return { record: record.join(''), wagesCents, withheldCents };
+    }
+
+    function buildRT(rsCount, totalWagesCents, totalWithheldCents, errors) {
+      const record = Array(512).fill(' ');
+      setField(record, 1, 2, 'RT');
+      setField(record, 3, 7, padLeft(String(rsCount), 7, '0'));
+      setField(record, 10, 15, formatMoney(totalWagesCents, 15, errors, 'RT: Total MA Taxable Wages'));
+      setField(record, 25, 15, formatMoney(totalWithheldCents, 15, errors, 'RT: Total MA Tax Withheld'));
+      return record.join('');
+    }
+
+    function buildRF(rsCount) {
+      const record = Array(512).fill(' ');
+      setField(record, 1, 2, 'RF');
+      setField(record, 8, 9, padLeft(String(rsCount), 9, '0'));
+      return record.join('');
+    }
+
+    function getEmployeeData(row) {
+      const get = (field) => row.querySelector(`[data-field="${field}"]`).value.trim();
+      return {
+        ssn: get('ssn'),
+        first: get('first'),
+        middle: get('middle'),
+        last: get('last'),
+        suffix: get('suffix'),
+        loc: get('loc'),
+        del: get('del'),
+        city: get('city'),
+        state: get('state'),
+        zip5: get('zip5'),
+        zip4: get('zip4'),
+        wages: get('wages'),
+        withheld: get('withheld'),
+        mapfml: get('mapfml')
+      };
+    }
+
+    function generateFile() {
+      errorsEl.textContent = '';
+      previewEl.value = '';
+      downloadBtn.disabled = true;
+
+      const errors = [];
+
+      const ra = buildRA(errors);
+      const re = buildRE(errors);
+
+      const employeeRows = Array.from(document.querySelectorAll('.employee-row'));
+      if (employeeRows.length === 0) {
+        errors.push('At least one employee is required.');
+      }
+
+      const rsRecords = [];
+      let totalWages = 0n;
+      let totalWithheld = 0n;
+
+      employeeRows.forEach((row, idx) => {
+        const employee = getEmployeeData(row);
+        const { record, wagesCents, withheldCents } = buildRS(employee, errors, idx + 1);
+        rsRecords.push(record);
+        totalWages += wagesCents;
+        totalWithheld += withheldCents;
+      });
+
+      const rt = buildRT(rsRecords.length, totalWages, totalWithheld, errors);
+      const rf = buildRF(rsRecords.length);
+
+      if (errors.length > 0) {
+        errorsEl.textContent = errors.join('\n');
+        return;
+      }
+
+      const records = [ra, re, ...rsRecords, rt, rf];
+      const output = records.join('\r\n') + '\r\n';
+
+      previewEl.value = records.slice(0, 5).join('\n');
+
+      const blob = new Blob([output], { type: 'text/plain;charset=ascii' });
+      const url = URL.createObjectURL(blob);
+      downloadBtn.disabled = false;
+      downloadBtn.onclick = () => {
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'ma_w2_efw2.txt';
+        a.click();
+        URL.revokeObjectURL(url);
+      };
+    }
+
+    function applyGenericToAll() {
+      const get = (id) => document.getElementById(id).value.trim();
+
+      const name = get('gen_name');
+      const loc = get('gen_loc');
+      const del = get('gen_del');
+      const city = get('gen_city');
+      const state = get('gen_state');
+      const zip5 = get('gen_zip5');
+      const zip4 = get('gen_zip4');
+      const contactName = get('gen_contact_name');
+      const contactPhone = get('gen_contact_phone');
+      const contactExt = get('gen_contact_ext');
+      const contactEmail = get('gen_contact_email');
+      const contactFax = get('gen_contact_fax');
+
+      const set = (id, value) => {
+        if (value === '') return;
+        document.getElementById(id).value = value;
+      };
+
+      // RA Company
+      set('ra_company_name', name);
+      set('ra_company_loc', loc);
+      set('ra_company_del', del);
+      set('ra_company_city', city);
+      set('ra_company_state', state);
+      set('ra_company_zip5', zip5);
+      set('ra_company_zip4', zip4);
+
+      // RA Submitter
+      set('ra_submitter_name', name);
+      set('ra_submitter_loc', loc);
+      set('ra_submitter_del', del);
+      set('ra_submitter_city', city);
+      set('ra_submitter_state', state);
+      set('ra_submitter_zip5', zip5);
+      set('ra_submitter_zip4', zip4);
+
+      // RA Contact
+      set('ra_contact_name', contactName);
+      set('ra_contact_phone', contactPhone);
+      set('ra_contact_ext', contactExt);
+      set('ra_contact_email', contactEmail);
+      set('ra_contact_fax', contactFax);
+
+      // RE Employer
+      set('re_name', name);
+      set('re_loc', loc);
+      set('re_del', del);
+      set('re_city', city);
+      set('re_state', state);
+      set('re_zip5', zip5);
+      set('re_zip4', zip4);
+
+      // RE Contact
+      set('re_contact_name', contactName);
+      set('re_contact_phone', contactPhone);
+      set('re_contact_ext', contactExt);
+      set('re_contact_email', contactEmail);
+      set('re_contact_fax', contactFax);
+    }
+
+    document.getElementById('apply_generic').addEventListener('click', applyGenericToAll);
+    document.getElementById('use_generic').addEventListener('change', (e) => {
+      if (e.target.checked) {
+        applyGenericToAll();
+      }
+    });
+
+    const genericInputs = [
+      'gen_name',
+      'gen_loc',
+      'gen_del',
+      'gen_city',
+      'gen_state',
+      'gen_zip5',
+      'gen_zip4',
+      'gen_contact_name',
+      'gen_contact_phone',
+      'gen_contact_ext',
+      'gen_contact_email',
+      'gen_contact_fax'
+    ];
+    genericInputs.forEach((id) => {
+      document.getElementById(id).addEventListener('input', () => {
+        const useGeneric = document.getElementById('use_generic');
+        if (useGeneric.checked) {
+          applyGenericToAll();
+        }
+      });
+    });
+
+    document.getElementById('generate').addEventListener('click', generateFile);
+
+    async function extractFromPdf() {
+      const fileInput = document.getElementById('pdf_upload');
+      const file = fileInput.files[0];
+      if (!file) {
+        pdfStatusEl.textContent = 'Please choose a PDF file first.';
+        return;
+      }
+
+      pdfStatusEl.textContent = 'Extracting…';
+      try {
+        const form = new FormData();
+        form.append('file', file);
+        const response = await fetch('http://localhost:8000/extract', {
+          method: 'POST',
+          body: form
+        });
+
+        if (!response.ok) {
+          const err = await response.json().catch(() => ({}));
+          pdfStatusEl.textContent = err.error || 'Extraction failed.';
+          return;
+        }
+
+        const data = await response.json();
+        applyExtractedFields(data.fields || {});
+        pdfStatusEl.textContent = `Extracted using ${data.method}. Please verify fields.`;
+      } catch (err) {
+        pdfStatusEl.textContent = 'Unable to reach local service. Is it running on http://localhost:8000?';
+      }
+    }
+
+    function applyExtractedFields(fields) {
+      if (fields.employer_name) {
+        document.getElementById('re_name').value = fields.employer_name;
+      }
+      if (fields.employer_ein) {
+        document.getElementById('re_ein').value = fields.employer_ein;
+      }
+
+      const employees = Array.isArray(fields.employees) ? fields.employees : [];
+      if (employees.length === 0) {
+        return;
+      }
+
+      employeesEl.innerHTML = '';
+      employees.forEach((emp) => {
+        const row = createEmployeeRow();
+        employeesEl.appendChild(row);
+
+        const set = (field, value) => {
+          if (value === null || value === undefined) return;
+          row.querySelector(`[data-field="${field}"]`).value = value;
+        };
+
+        set('ssn', emp.ssn || '');
+        set('first', emp.first || '');
+        set('middle', emp.middle || '');
+        set('last', emp.last || '');
+
+        const wages = emp.state_wages || emp.wages || '';
+        const withheld = emp.state_withheld || '';
+        set('wages', wages);
+        set('withheld', withheld);
+        if (emp.mapfml) {
+          set('mapfml', emp.mapfml);
+        }
+      });
+    }
+
+    document.getElementById('extract_pdf').addEventListener('click', extractFromPdf);
+  </script>
+</body>
+</html>
